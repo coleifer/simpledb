@@ -8,8 +8,8 @@ with open(os.path.join(os.path.dirname(__file__), 'README.md')) as fh:
 
 setup(
     name='simpledb',
-    version=__import__('simpledb').__version__,
-    description='simpledb',
+    version=__import__('simple').__version__,
+    description='simple',
     long_description=readme,
     author='Charles Leifer',
     author_email='coleifer@gmail.com',
@@ -17,7 +17,7 @@ setup(
     packages=find_packages(),
     extras_require=extras_require,
     package_data={
-        'simpledb': [
+        'simple': [
         ],
     },
     classifiers=[
@@ -28,11 +28,11 @@ setup(
         'Operating System :: OS Independent',
         'Programming Language :: Python',
     ],
-    test_suite='runtests.runtests',
+    test_suite='tests',
     entry_points={
         'console_scripts': [
-            'simpledb = simpledb:main'
+            'simple = simple:main'
         ]
     },
-    scripts=['simpledb.py'],
+    scripts=['simple.py'],
 )

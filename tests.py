@@ -1,56 +1,78 @@
+try:
+    import gevent
+except ImportError:
+    gevent = None
+
 import datetime
+import functools
 import sys
+import threading
 import unittest
 
-from huey.contrib.simple import QueueServer
-from huey.contrib.simple_storage import SimpleHuey
-from huey.tests.base import BaseTestCase
+from simple import Client
+from simple import QueueServer
 
 
-huey = SimpleHuey()
+TEST_HOST = '127.0.0.1'
+TEST_PORT = 31339
 
 
-@huey.task()
-def add_numbers(a, b):
-    return a + b
+def run_queue_server():
+    server = QueueServer(host=TEST_HOST, port=TEST_PORT,
+                         use_gevent=gevent is not None)
+    if gevent is not None:
+        t = gevent.spawn(server.run)
+    else:
+        t = threading.Thread(target=server.run)
+        t.daemon = True
+        t.start()
+    return t
 
 
-class TestSimpleHuey(BaseTestCase):
+class KeyPartial(object):
+    def __init__(self, client, key):
+        self.client = client
+        self.key = key
+    def __getattr__(self, attr):
+        return functools.partial(getattr(self.client, attr), self.key)
+
+
+class TestSimpleDatabase(unittest.TestCase):
     def setUp(self):
-        huey.storage.flush_all()
+        self.c = Client(host=TEST_HOST, port=TEST_PORT)
+        self.c.connect()
 
-    def test_queue(self):
-        res = add_numbers(1, 2)
-        task = huey.dequeue()
-        self.assertEqual(huey.execute(task), 3)
-        self.assertEqual(res.get(), 3)
+    def tearDown(self):
+        self.c.close()
 
-    def test_schedule(self):
-        ts = datetime.datetime.now().replace(microsecond=0)
-        make_eta = lambda s: ts + datetime.timedelta(seconds=s)
+    def test_list(self):
+        lq = KeyPartial(self.c, 'queue')
 
-        res1 = add_numbers.schedule((1, 2), eta=make_eta(4), convert_utc=False)
-        res2 = add_numbers.schedule((2, 3), eta=make_eta(2), convert_utc=False)
-        self.assertEqual(len(huey), 2)
+        lq.lpush('i1')
+        lq.lpush('i2')
+        lq.rpush('i3')
+        lq.rpush('i4')
+        result = lq.lrange(0)
+        self.assertEqual(result, [b'i2', b'i1', b'i3', b'i4'])
 
-        huey.add_schedule(huey.dequeue())
-        huey.add_schedule(huey.dequeue())
+        self.assertEqual(lq.lpop(), b'i2')
+        self.assertEqual(lq.rpop(), b'i4')
+        self.assertEqual(lq.llen(), 2)
 
-        scheduled = huey.read_schedule(make_eta(1))
-        self.assertEqual(len(scheduled), 0)
+        self.assertEqual(lq.lrem('i3'), 1)
+        self.assertEqual(lq.lrem('i3'), 0)
 
-        scheduled = huey.read_schedule(make_eta(2))
-        self.assertEqual(len(scheduled), 1)
-        task, = scheduled
-        self.assertEqual(huey.execute(task), 5)
-        self.assertEqual(res2.get(), 5)
+        lq.lpush('a1', 'a2', 'a3', 'a4')
+        self.assertEqual(lq.lindex(2), b'a2')
 
-        scheduled = huey.read_schedule(make_eta(4))
-        self.assertEqual(len(scheduled), 1)
-        task, = scheduled
-        self.assertEqual(huey.execute(task), 3)
-        self.assertEqual(res1.get(), 3)
+        lq.lset(2, 'x')
+        self.assertEqual(lq.lrange(1, 3), [b'a3', b'x'])
+
+        lq.ltrim(1, 4)
+        self.assertEqual(lq.lrange(0), [b'a3', b'x', b'a1'])
+        self.assertEqual(lq.lflush(), 3)
 
 
 if __name__ == '__main__':
+    run_queue_server()
     unittest.main(argv=sys.argv)

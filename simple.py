@@ -218,9 +218,11 @@ class QueueServer(object):
         self._commands = self.get_commands()
         self._protocol = ProtocolHandler()
 
+        self._hashes = defaultdict(dict)
         self._kv = {}
         self._queues = defaultdict(deque)
         self._schedule = []
+        self._sets = defaultdict(set)
 
     def get_commands(self):
         timestamp_re = (r'(?P<timestamp>\d{4}-\d{2}-\d{2} '
@@ -234,6 +236,7 @@ class QueueServer(object):
             (b'LREM', self.lrem),
             (b'LLEN', self.llen),
             (b'LINDEX', self.lindex),
+            (b'LRANGE', self.lrange),
             (b'LSET', self.lset),
             (b'LTRIM', self.ltrim),
             (b'RPOPLPUSH', self.rpoplpush),
@@ -257,11 +260,37 @@ class QueueServer(object):
             (b'SETNX', self.kv_setnx),
             (b'LEN', self.kv_len),
             (b'FLUSH', self.kv_flush),
-            (b'LENGTH', self.kv_length),
+
+            # Hash commands.
+            (b'HDEL', self.hdel),
+            (b'HEXISTS', self.hexists),
+            (b'HGET', self.hget),
+            (b'HGETALL', self.hgetall),
+            (b'HINCRBY', self.hincrby),
+            (b'HKEYS', self.hkeys),
+            (b'HLEN', self.hlen),
+            (b'HMGET', self.hmget),
+            (b'HMSET', self.hmset),
+            (b'HSET', self.hset),
+            (b'HSETNX', self.hsetnx),
+            (b'HVALS', self.hvals),
+
+            # Set commands.
+            (b'SADD', self.sadd),
+            (b'SCARD', self.scard),
+            (b'SDIFF', self.sdiff),
+            (b'SDIFFSTORE', self.sdiffstore),
+            (b'SINTER', self.sinter),
+            (b'SINTERSTORE', self.sinterstore),
+            (b'SISMEMBER', self.sismember),
+            (b'SMEMBERS', self.smembers),
+            (b'SPOP', self.spop),
+            (b'SREM', self.srem),
+            (b'SUNION', self.sunion),
+            (b'SUNIONSTORE', self.sunionstore),
 
             # Schedule commands.
             (b'ADD', self.schedule_add),
-            (b'READ', self.schedule_read),
             (b'READ', self.schedule_read),
             (b'FLUSH_SCHEDULE', self.schedule_flush),
             (b'LENGTH_SCHEDULE', self.schedule_length),
@@ -317,7 +346,7 @@ class QueueServer(object):
             return 1
 
     def ltrim(self, queue, start, stop):
-        self._queues[queue] = self._queues[queue][start:stop]
+        self._queues[queue] = deque(list(self._queues[queue])[start:stop])
 
     def rpoplpush(self, src, dest):
         try:
@@ -328,10 +357,10 @@ class QueueServer(object):
             return 1
 
     def lrange(self, queue, start, end=None):
-        return self._queues[queue][start:end]
+        return list(self._queues[queue])[start:end]
 
     def lflush(self, queue):
-        qlen = self.queue_length(queue)
+        qlen = self.llen(queue)
         self._queues[queue].clear()
         return qlen
 
@@ -415,6 +444,127 @@ class QueueServer(object):
             return datetime.datetime.strptime(decode(timestamp), fmt)
         except ValueError:
             raise CommandError('Timestamp must be formatted Y-m-d H:M:S')
+
+    def hdel(self, key, field):
+        if self.hexists(key, field):
+            del self._hashes[key][field]
+            return 1
+        return 0
+
+    def hexists(self, key, field):
+        return 1 if field in self._hashes[key] else 0
+
+    def hget(self, key, field):
+        return self._hashes[key].get(field)
+
+    def hgetall(self, key):
+        return self._hashes[key]
+
+    def hincrby(self, key, field, incr=1):
+        self._hashes[key].setdefault(field, 0)
+        self._hashes[key][field] += incr
+        return self._hashes[key][field]
+
+    def hkeys(self, key):
+        return list(self._hashes[key])
+
+    def hlen(self, key):
+        return len(self._hashes[key])
+
+    def hmget(self, key, *fields):
+        accum = {}
+        for field in fields:
+            accum[field] = self._hashes[key].get(field)
+        return accum
+
+    def hmset(self, key, data):
+        self._hashes[key].update(data)
+        return len(data)
+
+    def hset(self, key, field, value):
+        self._hashes[key][field] = value
+        return 1
+
+    def hsetnx(self, key, field, value):
+        if field not in self._hashes[key]:
+            self._hashes[key][field] = value
+            return 1
+        return 0
+
+    def hvals(self, key):
+        return list(self._hashes[key].values())
+
+    def sadd(self, key, *members):
+        self._sets[key].update(members)
+        return len(self._sets[key])
+
+    def scard(self, key):
+        return len(self._sets[key])
+
+    def sdiff(self, key, *keys):
+        src = set(self._sets[key])
+        for key in keys:
+            src -= self._sets[key]
+        return list(src)
+
+    def sdiffstore(self, dest, key, *keys):
+        src = set(self._sets[key])
+        for key in keys:
+            src -= self._sets[key]
+        self._sets[dest] = src
+        return len(src)
+
+    def sinter(self, key, *keys):
+        src = set(self._sets[key])
+        for key in keys:
+            src &= self._sets[key]
+        return list(src)
+
+    def sinterstore(self, dest, key, *keys):
+        src = set(self._sets[key])
+        for key in keys:
+            src &= self._sets[key]
+        self._sets[dest] = src
+        return len(src)
+
+    def sismember(self, key, member):
+        return 1 if member in self._sets[key] else 0
+
+    def smembers(self, key):
+        return list(self._sets[key])
+
+    def spop(self, key, n=1):
+        accum = []
+        for _ in range(n):
+            try:
+                accum.append(self._sets[key].pop())
+            except KeyError:
+                break
+        return accum
+
+    def srem(self, key, *members):
+        ct = 0
+        for member in members:
+            try:
+                self._sets[key].remove(member)
+            except KeyError:
+                pass
+            else:
+                ct += 1
+        return ct
+
+    def sunion(self, key, *keys):
+        src = set(self._sets[key])
+        for key in keys:
+            src |= self._sets[key]
+        return list(src)
+
+    def sunionstore(self, dest, key, *keys):
+        src = set(self._sets[key])
+        for key in keys:
+            src |= self._sets[key]
+        self._sets[dest] = src
+        return len(src)
 
     def schedule_add(self, timestamp, data):
         dt = self._decode_timestamp(timestamp)
@@ -515,78 +665,75 @@ class Client(object):
             raise CommandError(resp.message)
         return resp
 
-    def enqueue(self, queue, data):
-        return self.execute('ENQUEUE', queue, data)
+    def command(cmd):
+        def method(self, *args):
+            return self.execute(cmd, *args)
+        return method
 
-    def dequeue(self, queue):
-        return self.execute('DEQUEUE', queue)
+    lpush = command('LPUSH')
+    rpush = command('RPUSH')
+    lpop = command('LPOP')
+    rpop = command('RPOP')
+    lrem = command('LREM')
+    llen = command('LLEN')
+    lindex = command('LINDEX')
+    lrange = command('LRANGE')
+    lset = command('LSET')
+    ltrim = command('LTRIM')
+    rpoplpush = command('RPOPLPUSH')
+    lflush = command('LFLUSH')
 
-    def unqueue(self, queue, data):
-        return self.execute('REMOVE', queue, data)
+    append = command('APPEND')
+    decr = command('DECR')
+    decrby = command('DECRBY')
+    delete = command('DELETE')
+    exists = command('EXISTS')
+    get = command('GET')
+    getset = command('GETSET')
+    incr = command('INCR')
+    incrby = command('INCRBY')
+    mget = command('MGET')
+    mpop = command('MPOP')
+    mset = command('MSET')
+    pop = command('POP')
+    set = command('SET')
+    setnx = command('SETNX')
+    length = command('LEN')
+    flush = command('FLUSH')
 
-    def queue_size(self, queue):
-        return self.execute('LENGTH', queue)
+    hdel = command('HDEL')
+    hexists = command('HEXISTS')
+    hget = command('HGET')
+    hgetall = command('HGETALL')
+    hincrby = command('HINCRBY')
+    hkeys = command('HKEYS')
+    hlen = command('HLEN')
+    hmget = command('HMGET')
+    hmset = command('HMSET')
+    hset = command('HSET')
+    hsetnx = command('HSETNX')
+    hvals = command('HVALS')
 
-    def flush_queue(self, queue):
-        return self.execute('FLUSH', queue)
+    sadd = command('SADD')
+    scard = command('SCARD')
+    sdiff = command('SDIFF')
+    sdiffstore = command('SDIFFSTORE')
+    sinter = command('SINTER')
+    sinterstore = command('SINTERSTORE')
+    sismember = command('SISMEMBER')
+    smembers = command('SMEMBERS')
+    spop = command('SPOP')
+    srem = command('SREM')
+    sunion = command('SUNION')
+    sunionstore = command('SUNIONSTORE')
 
-    def add_to_schedule(self, data, ts):
-        return self.execute('ADD', str(ts), data)
+    add = command('ADD')
+    read = command('READ')
+    flush_schedule = command('FLUSH_SCHEDULE')
+    length_schedule = command('LENGTH_SCHEDULE')
 
-    def read_schedule(self, ts):
-        return self.execute('READ', str(ts))
-
-    def schedule_size(self):
-        return self.execute('LENGTH_SCHEDULE')
-
-    def flush_schedule(self):
-        return self.execute('FLUSH_SCHEDULE')
-
-    def put_data(self, key, value):
-        return self.execute('SET', key, value)
-    set = put_data
-
-    def peek_data(self, key):
-        return self.execute('GET', key)
-    get = peek_data
-
-    def mget(self, *keys):
-        return self.execute('MGET', *keys)
-
-    def mset(self, __data=None, **kwargs):
-        items = []
-        if __data:
-            for key in __data:
-                items.append(key)
-                items.append(__data[key])
-        for key in kwargs:
-            items.append(key)
-            items.append(kwargs[key])
-        return self.execute('MSET', *items)
-
-    def mpop(self, *keys):
-        return self.execute('MPOP', *keys)
-
-    def pop_data(self, key):
-        return self.execute('POP', key)
-
-    def has_data_for_key(self, key):
-        return self.execute('EXISTS', key)
-
-    def put_if_empty(self, key, value):
-        return self.execute('SETNX', key, value)
-
-    def result_store_size(self):
-        return self.execute('LENGTH_KV')
-
-    def flush_results(self):
-        return self.execute('FLUSH_KV')
-
-    def flush_all(self):
-        return self.execute('FLUSHALL')
-
-    def shutdown(self):
-        self.execute('SHUTDOWN')
+    flushall = command('FLUSHALL')
+    shutdown = command('SHUTDOWN')
 
 
 def get_option_parser():

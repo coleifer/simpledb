@@ -72,6 +72,20 @@ class TestSimpleDatabase(unittest.TestCase):
         self.assertEqual(lq.lrange(0), [b'a3', b'x', b'a1'])
         self.assertEqual(lq.lflush(), 3)
 
+    def test_kv(self):
+        kp = KeyPartial(self.c, 'k1')
+        kp.set(['alpha', 'beta', 'gamma'])
+        self.assertEqual(kp.get(), [b'alpha', b'beta', b'gamma'])
+
+        res = kp.append(['pi', 'omega'])
+        self.assertEqual(res, [b'alpha', b'beta', b'gamma', b'pi', b'omega'])
+
+    def test_incr_decr(self):
+        self.assertEqual(self.c.incr('i'), 1)
+        self.assertEqual(self.c.decr('i'), 0)
+        self.assertEqual(self.c.incrby('i2', 3), 3)
+        self.assertEqual(self.c.incrby('i2', 2), 5)
+
 
 if __name__ == '__main__':
     run_queue_server()

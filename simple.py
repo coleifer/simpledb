@@ -625,6 +625,11 @@ class QueueServer(object):
         self.schedule_flush()
         return 1
 
+    def add_command(self, command, callback):
+        if isinstance(command, unicode):
+            command = command.encode('utf-8')
+        self._commands[command] = callback
+
     def shutdown(self):
         raise Shutdown('shutting down')
 

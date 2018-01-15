@@ -9,8 +9,8 @@ import sys
 import threading
 import unittest
 
-from miniredis import Client
-from miniredis import QueueServer
+from simpledb import Client
+from simpledb import QueueServer
 
 
 TEST_HOST = '127.0.0.1'

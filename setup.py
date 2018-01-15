@@ -7,15 +7,15 @@ with open(os.path.join(os.path.dirname(__file__), 'README.md')) as fh:
 
 
 setup(
-    name='mini-redis',
-    version=__import__('miniredis').__version__,
-    description='miniredis',
+    name='simpledb',
+    version=__import__('simpledb').__version__,
+    description='simpledb',
     long_description=readme,
     author='Charles Leifer',
     author_email='coleifer@gmail.com',
-    url='http://github.com/coleifer/miniredis/',
+    url='http://github.com/coleifer/simpledb/',
     packages=[],
-    py_modules=['miniredis'],
+    py_modules=['simpledb'],
     classifiers=[
         'Development Status :: 4 - Beta',
         'Environment :: Web Environment',
@@ -24,5 +24,5 @@ setup(
         'Operating System :: OS Independent',
         'Programming Language :: Python',
     ],
-    scripts=['miniredis.py'],
+    scripts=['simpledb.py'],
     test_suite='tests')

@@ -1,4 +1,4 @@
-from miniredis import QueueServer, ProtocolHandler, Client
+from simpledb import QueueServer, ProtocolHandler, Client
 
 import contextlib
 import threading

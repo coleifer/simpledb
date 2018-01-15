@@ -1,5 +1,6 @@
 try:
     import gevent
+    from gevent import monkey; monkey.patch_all()
 except ImportError:
     gevent = None
 
@@ -53,32 +54,35 @@ class TestSimpleDatabase(unittest.TestCase):
         lq.rpush('i3')
         lq.rpush('i4')
         result = lq.lrange(0)
-        self.assertEqual(result, [b'i2', b'i1', b'i3', b'i4'])
+        self.assertEqual(result, ['i2', 'i1', 'i3', 'i4'])
 
-        self.assertEqual(lq.lpop(), b'i2')
-        self.assertEqual(lq.rpop(), b'i4')
+        self.assertEqual(lq.lpop(), 'i2')
+        self.assertEqual(lq.rpop(), 'i4')
         self.assertEqual(lq.llen(), 2)
 
         self.assertEqual(lq.lrem('i3'), 1)
         self.assertEqual(lq.lrem('i3'), 0)
 
         lq.lpush('a1', 'a2', 'a3', 'a4')
-        self.assertEqual(lq.lindex(2), b'a2')
+        self.assertEqual(lq.lindex(2), 'a2')
 
         lq.lset(2, 'x')
-        self.assertEqual(lq.lrange(1, 3), [b'a3', b'x'])
+        self.assertEqual(lq.lrange(1, 3), ['a3', 'x'])
 
         lq.ltrim(1, 4)
-        self.assertEqual(lq.lrange(0), [b'a3', b'x', b'a1'])
+        self.assertEqual(lq.lrange(0), ['a3', 'x', 'a1'])
         self.assertEqual(lq.lflush(), 3)
 
     def test_kv(self):
         kp = KeyPartial(self.c, 'k1')
         kp.set(['alpha', 'beta', 'gamma'])
-        self.assertEqual(kp.get(), [b'alpha', b'beta', b'gamma'])
+        self.assertEqual(kp.get(), ['alpha', 'beta', 'gamma'])
 
-        res = kp.append(['pi', 'omega'])
-        self.assertEqual(res, [b'alpha', b'beta', b'gamma', b'pi', b'omega'])
+        res = kp.append(['pi', b'omega'])
+        self.assertEqual(res, ['alpha', 'beta', 'gamma', 'pi', b'omega'])
+
+        kp.set([b'foo', b'bar', b'baz'])
+        self.assertEqual(kp.get(), [b'foo', b'bar', b'baz'])
 
     def test_incr_decr(self):
         self.assertEqual(self.c.incr('i'), 1)

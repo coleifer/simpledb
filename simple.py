@@ -14,6 +14,7 @@ from io import BytesIO
 from socket import error as socket_error
 import datetime
 import heapq
+import json
 import logging
 import optparse
 import sys
@@ -64,6 +65,8 @@ Server replies, indicating response type using the first byte:
 * "-" - error
 * ":" - integer
 * "$" - bulk string
+* "^" - bulk unicode string
+* "@" - json string (uses bulk string rules)
 * "*" - array
 * "%" - dict
 
@@ -117,6 +120,8 @@ class ProtocolHandler(object):
             b'-': self.handle_error,
             b':': self.handle_integer,
             b'$': self.handle_string,
+            b'^': self.handle_unicode,
+            b'@': self.handle_json,
             b'*': self.handle_array,
             b'%': self.handle_dict,
         }
@@ -129,9 +134,12 @@ class ProtocolHandler(object):
 
     def handle_integer(self, socket_file):
         number = socket_file.readline().rstrip(b'\r\n')
-        if b'.' in number:
-            return float(number)
-        return int(number)
+        try:
+            if b'.' in number:
+                return float(number)
+            return int(number)
+        except ValueError:
+            raise CommandError('"%s" not a recognized number' % number)
 
     def handle_string(self, socket_file):
         length = int(socket_file.readline().rstrip(b'\r\n'))
@@ -139,6 +147,15 @@ class ProtocolHandler(object):
             return None
         length += 2
         return socket_file.read(length)[:-2]
+
+    def handle_unicode(self, socket_file):
+        return self.handle_string(socket_file).decode('utf-8')
+
+    def handle_json(self, socket_file):
+        try:
+            return json.loads(self.handle_string(socket_file))
+        except ValueError:
+            raise CommandError('improperly formatted json')
 
     def handle_array(self, socket_file):
         num_elements = int(socket_file.readline().rstrip(b'\r\n'))
@@ -158,7 +175,10 @@ class ProtocolHandler(object):
         try:
             return self.handlers[first_byte](socket_file)
         except KeyError:
-            raise ValueError('invalid request')
+            rest = socket_file.readline().rstrip(b'\r\n')
+            return first_byte + rest
+        except Exception as exc:
+            raise CommandError('Error processing data: %s' % repr(exc))
 
     def write_response(self, socket_file, data):
         buf = BytesIO()
@@ -172,7 +192,9 @@ class ProtocolHandler(object):
             buf.write(b'$%d\r\n%s\r\n' % (len(data), data))
         elif isinstance(data, unicode):
             bdata = data.encode('utf-8')
-            buf.write(b'$%d\r\n%s\r\n' % (len(bdata), bdata))
+            buf.write(b'^%d\r\n%s\r\n' % (len(bdata), bdata))
+        elif data is True or data is False:
+            buf.write(b':%d\r\n' % (1 if data else 0))
         elif isinstance(data, (int, float)):
             buf.write(b':%d\r\n' % data)
         elif isinstance(data, Error):
@@ -223,6 +245,11 @@ class QueueServer(object):
         self._queues = defaultdict(deque)
         self._schedule = []
         self._sets = defaultdict(set)
+
+        self._active_connections = 0
+        self._commands_processed = 0
+        self._command_errors = 0
+        self._connections = 0
 
     def get_commands(self):
         timestamp_re = (r'(?P<timestamp>\d{4}-\d{2}-\d{2} '
@@ -296,6 +323,7 @@ class QueueServer(object):
             (b'LENGTH_SCHEDULE', self.schedule_length),
 
             # Misc.
+            (b'INFO', self.info),
             (b'FLUSHALL', self.flush_all),
             (b'SHUTDOWN', self.shutdown),
         ))
@@ -587,8 +615,17 @@ class QueueServer(object):
     def schedule_length(self):
         return len(self._schedule)
 
+    def info(self):
+        return {
+            'active_connections': self._active_connections,
+            'commands_processed': self._commands_processed,
+            'command_errors': self._command_errors,
+            'connections': self._connections}
+
     def flush_all(self):
+        self._hashes = defaultdict(dict)
         self._queues = defaultdict(deque)
+        self._sets = defaultdict(set)
         self.kv_flush()
         self.schedule_flush()
         return 1
@@ -602,13 +639,22 @@ class QueueServer(object):
     def connection_handler(self, conn, address):
         logger.info('Connection received: %s:%s' % address)
         socket_file = conn.makefile('rwb')
+        self._active_connections += 1
         while True:
             try:
-                data = self._protocol.handle_request(socket_file)
+                self.request_response(socket_file)
             except Disconnect:
                 logger.info('Client went away: %s:%s' % address)
                 break
+        self._active_connections -= 1
 
+    def request_response(self, socket_file):
+        try:
+            data = self._protocol.handle_request(socket_file)
+        except CommandError as exc:
+            logger.exception('Error handling request.')
+            resp = Error(command_error.message)
+        else:
             try:
                 resp = self.respond(data)
             except Shutdown:
@@ -617,11 +663,14 @@ class QueueServer(object):
                 raise KeyboardInterrupt()
             except CommandError as command_error:
                 resp = Error(command_error.message)
+                self._command_errors += 1
             except Exception as exc:
                 logger.exception('Unhandled error')
                 resp = Error('Unhandled server error')
+            else:
+                self._commands_processed += 1
 
-            self._protocol.write_response(socket_file, resp)
+        self._protocol.write_response(socket_file, resp)
 
     def respond(self, data):
         if not isinstance(data, list):
@@ -649,16 +698,29 @@ class Client(object):
         self._socket = None
         self._fh = None
         self._protocol = ProtocolHandler()
+        self._is_closed = True
 
     def connect(self):
+        if not self._is_closed:
+            self.close()
+
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.connect((self._host, self._port))
         self._fh = self._socket.makefile('rwb')
+        self._is_closed = False
+        return True
 
     def close(self):
+        if self._is_closed:
+            return False
+
         self._socket.close()
+        self._is_closed = True
+        return True
 
     def execute(self, *args):
+        if self._is_closed:
+            self.connect()
         self._protocol.write_response(self._fh, args)
         resp = self._protocol.handle_request(self._fh)
         if isinstance(resp, Error):
@@ -667,7 +729,7 @@ class Client(object):
 
     def command(cmd):
         def method(self, *args):
-            return self.execute(cmd, *args)
+            return self.execute(cmd.encode('utf-8'), *args)
         return method
 
     lpush = command('LPUSH')

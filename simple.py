@@ -54,9 +54,6 @@ class CommandError(Exception):
         super(CommandError, self).__init__()
 
 
-class Disconnect(Exception): pass
-
-
 """
 Protocol is based on Redis wire protocol.
 
@@ -167,7 +164,7 @@ class ProtocolHandler(object):
     def handle_request(self, socket_file):
         first_byte = socket_file.read(1)
         if not first_byte:
-            raise Disconnect()
+            raise EOFError()
 
         try:
             return self.handlers[first_byte](socket_file)
@@ -643,7 +640,7 @@ class QueueServer(object):
         while True:
             try:
                 self.request_response(socket_file)
-            except Disconnect:
+            except EOFError:
                 logger.info('Client went away: %s:%s' % address)
                 break
             except Exception as exc:
@@ -792,6 +789,7 @@ class Client(object):
     flush_schedule = command('FLUSH_SCHEDULE')
     length_schedule = command('LENGTH_SCHEDULE')
 
+    info = command('INFO')
     flushall = command('FLUSHALL')
     shutdown = command('SHUTDOWN')
 

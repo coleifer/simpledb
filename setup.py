@@ -1,5 +1,5 @@
 import os
-from setuptools import setup, find_packages
+from distutils.core import setup
 
 
 with open(os.path.join(os.path.dirname(__file__), 'README.md')) as fh:
@@ -14,11 +14,8 @@ setup(
     author='Charles Leifer',
     author_email='coleifer@gmail.com',
     url='http://github.com/coleifer/simple-db/',
-    packages=find_packages(),
-    package_data={
-        'simple': [
-        ],
-    },
+    packages=[],
+    py_modules=['simple'],
     classifiers=[
         'Development Status :: 4 - Beta',
         'Environment :: Web Environment',
@@ -32,6 +29,4 @@ setup(
         'console_scripts': [
             'simple = simple:main'
         ]
-    },
-    scripts=['simple.py'],
-)
+    })

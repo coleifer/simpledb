@@ -431,10 +431,15 @@ class QueueServer(object):
     def kv_mpop(self, *keys):
         return [self._kv.pop(key, None) for key in keys]
 
-    def kv_mset(self, *items):
-        for idx in range(0, len(items), 2):
-            self._kv[items[idx]] = items[idx + 1]
-        return len(items) / 2
+    def kv_mset(self, __data=None, **kwargs):
+        n = 0
+        if __data is not None:
+            self._kv.update(__data)
+            n += len(__data)
+        if kwargs:
+            self._kv.update(kwargs)
+            n += len(kwargs)
+        return n
 
     def kv_pop(self, key):
         return self._kv.pop(key, None)

@@ -14,6 +14,7 @@ from io import BytesIO
 from socket import error as socket_error
 import datetime
 import heapq
+import importlib
 import json
 import logging
 import optparse
@@ -806,6 +807,8 @@ def get_option_parser():
     parser.add_option('-p', '--port', default=31337, dest='port',
                       help='Port to listen on.', type=int)
     parser.add_option('-l', '--log-file', dest='log_file', help='Log file.')
+    parser.add_option('-x', '--extension', action='append', dest='extensions',
+                      help='Import path for Python extension module(s).')
     return parser
 
 
@@ -821,6 +824,24 @@ def configure_logger(options):
         logger.setLevel(logging.INFO)
 
 
+def load_extensions(server, extensions):
+    for extension in extensions:
+        try:
+            module = importlib.import_module(extension)
+        except ImportError:
+            logger.exception('Could not import extension %s' % extension)
+        else:
+            try:
+                initialize = getattr(module, 'initialize')
+            except AttributeError:
+                logger.exception('Could not find "initialize" function in '
+                                 'extension %s' % extension)
+                raise
+            else:
+                initialize(server)
+                logger.info('Loaded %s extension.' % extension)
+
+
 if __name__ == '__main__':
     options, args = get_option_parser().parse_args()
 
@@ -831,4 +852,5 @@ if __name__ == '__main__':
     server = QueueServer(host=options.host, port=options.port,
                          max_clients=options.max_clients,
                          use_gevent=options.use_gevent)
+    load_extensions(server, options.extensions or ())
     server.run()

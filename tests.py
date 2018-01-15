@@ -9,8 +9,8 @@ import sys
 import threading
 import unittest
 
-from simple import Client
-from simple import QueueServer
+from miniredis import Client
+from miniredis import QueueServer
 
 
 TEST_HOST = '127.0.0.1'
@@ -37,7 +37,7 @@ class KeyPartial(object):
         return functools.partial(getattr(self.client, attr), self.key)
 
 
-class TestSimpleDatabase(unittest.TestCase):
+class TestMiniRedisDatabase(unittest.TestCase):
     def setUp(self):
         self.c = Client(host=TEST_HOST, port=TEST_PORT)
         self.c.connect()

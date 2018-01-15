@@ -1,4 +1,4 @@
-from simple import QueueServer, ProtocolHandler, Client
+from miniredis import QueueServer, ProtocolHandler, Client
 
 import contextlib
 import threading

@@ -1,6 +1,5 @@
 try:
     import gevent
-    from gevent import monkey; monkey.patch_all()
 except ImportError:
     gevent = None
 

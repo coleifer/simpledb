@@ -15,7 +15,6 @@ setup(
     author_email='coleifer@gmail.com',
     url='http://github.com/coleifer/simple-db/',
     packages=find_packages(),
-    extras_require=extras_require,
     package_data={
         'simple': [
         ],

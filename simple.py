@@ -24,6 +24,8 @@ except ImportError:
     import SocketServer as ss
 
 
+__version__ = '0.1.0'
+
 logger = logging.getLogger(__name__)
 
 
@@ -134,12 +136,9 @@ class ProtocolHandler(object):
 
     def handle_integer(self, socket_file):
         number = socket_file.readline().rstrip(b'\r\n')
-        try:
-            if b'.' in number:
-                return float(number)
-            return int(number)
-        except ValueError:
-            raise CommandError('"%s" not a recognized number' % number)
+        if b'.' in number:
+            return float(number)
+        return int(number)
 
     def handle_string(self, socket_file):
         length = int(socket_file.readline().rstrip(b'\r\n'))
@@ -152,10 +151,7 @@ class ProtocolHandler(object):
         return self.handle_string(socket_file).decode('utf-8')
 
     def handle_json(self, socket_file):
-        try:
-            return json.loads(self.handle_string(socket_file))
-        except ValueError:
-            raise CommandError('improperly formatted json')
+        return json.loads(self.handle_string(socket_file))
 
     def handle_array(self, socket_file):
         num_elements = int(socket_file.readline().rstrip(b'\r\n'))
@@ -177,8 +173,6 @@ class ProtocolHandler(object):
         except KeyError:
             rest = socket_file.readline().rstrip(b'\r\n')
             return first_byte + rest
-        except Exception as exc:
-            raise CommandError('Error processing data: %s' % repr(exc))
 
     def write_response(self, socket_file, data):
         buf = BytesIO()
@@ -646,29 +640,27 @@ class QueueServer(object):
             except Disconnect:
                 logger.info('Client went away: %s:%s' % address)
                 break
+            except Exception as exc:
+                logger.exception('Error processing command.')
         self._active_connections -= 1
 
     def request_response(self, socket_file):
+        data = self._protocol.handle_request(socket_file)
+
         try:
-            data = self._protocol.handle_request(socket_file)
-        except CommandError as exc:
-            logger.exception('Error handling request.')
+            resp = self.respond(data)
+        except Shutdown:
+            logger.info('Shutting down')
+            self._protocol.write_response(socket_file, 1)
+            raise KeyboardInterrupt()
+        except CommandError as command_error:
             resp = Error(command_error.message)
+            self._command_errors += 1
+        except Exception as exc:
+            logger.exception('Unhandled error')
+            resp = Error('Unhandled server error')
         else:
-            try:
-                resp = self.respond(data)
-            except Shutdown:
-                logger.info('Shutting down')
-                self._protocol.write_response(socket_file, 1)
-                raise KeyboardInterrupt()
-            except CommandError as command_error:
-                resp = Error(command_error.message)
-                self._command_errors += 1
-            except Exception as exc:
-                logger.exception('Unhandled error')
-                resp = Error('Unhandled server error')
-            else:
-                self._commands_processed += 1
+            self._commands_processed += 1
 
         self._protocol.write_response(socket_file, resp)
 

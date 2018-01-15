@@ -202,6 +202,8 @@ class ProtocolHandler(object):
                 self._write(buf, data[key])
         elif data is None:
             buf.write(b'$-1\r\n')
+        elif isinstance(data, datetime.datetime):
+            self._write(buf, str(data))
 
 
 class Shutdown(Exception): pass

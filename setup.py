@@ -7,7 +7,7 @@ with open(os.path.join(os.path.dirname(__file__), 'README.md')) as fh:
 
 
 setup(
-    name='miniredis',
+    name='mini-redis',
     version=__import__('miniredis').__version__,
     description='miniredis',
     long_description=readme,

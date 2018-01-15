@@ -190,7 +190,7 @@ class ProtocolHandler(object):
         elif isinstance(data, (int, float)):
             buf.write(b':%d\r\n' % data)
         elif isinstance(data, Error):
-            buf.write(b'-%s\r\n' % bytes(data.message, 'utf-8'))
+            buf.write(b'-%s\r\n' % encode(data.message))
         elif isinstance(data, (list, tuple)):
             buf.write(b'*%d\r\n' % len(data))
             for item in data:
@@ -452,7 +452,7 @@ class QueueServer(object):
         return len(self._kv)
 
     def kv_flush(self):
-        kvlen = self.kv_length()
+        kvlen = self.kv_len()
         self._kv.clear()
         return kvlen
 

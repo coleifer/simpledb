@@ -464,11 +464,12 @@ class QueueServer(object):
         return kvlen
 
     def _decode_timestamp(self, timestamp):
+        timestamp = decode(timestamp)
         fmt = '%Y-%m-%d %H:%M:%S'
-        if b'.' in timestamp:
+        if '.' in timestamp:
             fmt = fmt + '.%f'
         try:
-            return datetime.datetime.strptime(decode(timestamp), fmt)
+            return datetime.datetime.strptime(timestamp, fmt)
         except ValueError:
             raise CommandError('Timestamp must be formatted Y-m-d H:M:S')
 

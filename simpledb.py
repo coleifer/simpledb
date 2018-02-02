@@ -871,4 +871,12 @@ if __name__ == '__main__':
                          max_clients=options.max_clients,
                          use_gevent=options.use_gevent)
     load_extensions(server, options.extensions or ())
+    print('\x1b[32m  .--.')
+    print(' /( \x1b[34m@\x1b[33m >\x1b[32m    ,-.  '
+          '\x1b[1;32mSimpleDB '
+          '\x1b[1;33m%s:%s\x1b[32m' % (options.host, options.port))
+    print('/ \' .\'--._/  /')
+    print(':   ,    , .\'')
+    print('\'. (___.\'_/')
+    print(' \x1b[33m((\x1b[32m-\x1b[33m((\x1b[32m-\'\'\x1b[0m')
     server.run()

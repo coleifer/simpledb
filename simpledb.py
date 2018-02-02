@@ -245,6 +245,34 @@ class QueueServer(object):
         self._command_errors = 0
         self._connections = 0
 
+    def _get_state(self):
+        return {
+            'hashes': self._hashes,
+            'kv': self._kv,
+            'queues': self._queues,
+            'schedule': self._schedule,
+            'sets': self._sets}
+
+    def _set_state(self, state):
+        self._hashes = state['hashes']
+        self._kv = state['kv']
+        self._queues = state['queues']
+        self._schedule = state['schedule']
+        self._sets = state['sets']
+
+    def save_to_disk(self, filename):
+        with open(filename, 'wb') as fh:
+            pickle.dump(self._get_state(), fh, pickle.HIGHEST_PROTOCOL)
+        return True
+
+    def restore_from_disk(self, filename):
+        if not os.path.exists(filename):
+            return False
+        with open(filename, 'rb') as fh:
+            state = pickle.load(fh)
+        self._set_state(state)
+        return True
+
     def get_commands(self):
         timestamp_re = (r'(?P<timestamp>\d{4}-\d{2}-\d{2} '
                         '\d{2}:\d{2}:\d{2}(?:\.\d+)?)')
@@ -319,6 +347,8 @@ class QueueServer(object):
             # Misc.
             (b'INFO', self.info),
             (b'FLUSHALL', self.flush_all),
+            (b'SAVE', self.save_to_disk),
+            (b'RESTORE', self.restore_from_disk),
             (b'SHUTDOWN', self.shutdown),
         ))
 
@@ -806,6 +836,8 @@ class Client(object):
 
     info = command('INFO')
     flushall = command('FLUSHALL')
+    save = command('SAVE')
+    restore = command('RESTORE')
     shutdown = command('SHUTDOWN')
 
 

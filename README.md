@@ -2,6 +2,20 @@
 
 Miniature [Redis](https://redis.io)-like database written in Python.
 
+#### installing
+
+```
+$ pip install simpledb
+```
+
+Alternatively, you can install from git:
+
+```
+$ git clone https://github.com/coleifer/simpledb
+$ cd simpledb
+$ python setup.py install
+```
+
 #### running
 
 by default, the simpledb server runs on localhost:31337.

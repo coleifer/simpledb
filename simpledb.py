@@ -405,8 +405,15 @@ class QueueServer(object):
     def kv_delete(self, key):
         if key in self._kv:
             del self._kv[key]
-            return 1
-        return 0
+        elif key in self._hashes:
+            del self._hashes[key]
+        elif key in self._queues:
+            del self._queues[key]
+        elif key in self._sets:
+            del self._sets[key]
+        else:
+            return 0
+        return 1
 
     def kv_exists(self, key):
         return 1 if key in self._kv else 0

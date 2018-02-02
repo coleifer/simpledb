@@ -857,7 +857,14 @@ if __name__ == '__main__':
     options, args = get_option_parser().parse_args()
 
     if options.use_gevent:
-        from gevent import monkey; monkey.patch_all()
+        try:
+            from gevent import monkey; monkey.patch_all()
+        except ImportError:
+            logger.error('gevent is not installed.')
+            sys.stderr.write('gevent is not installed. To run using threads, '
+                             'specify the "-t" parameter.\n')
+            sys.stderr.flush()
+            sys.exit(1)
 
     configure_logger(options)
     server = QueueServer(host=options.host, port=options.port,

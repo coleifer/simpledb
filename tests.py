@@ -89,6 +89,34 @@ class TestMiniRedisDatabase(unittest.TestCase):
         self.assertEqual(self.c.incrby('i2', 3), 3)
         self.assertEqual(self.c.incrby('i2', 2), 5)
 
+    def test_persistence(self):
+        self.c.set('k1', 'v1')
+        self.c.hset('h1', 'k1', 'v1')
+        self.c.sadd('s1', 'v1', 'v2')
+        self.assertTrue(self.c.save('/tmp/simpledb.state'))
+        self.c.flushall()
+
+        self.assertTrue(self.c.get('k1') is None)
+        self.assertTrue(self.c.hget('h1', 'k1') is None)
+        self.assertTrue(self.c.scard('s1') == 0)
+
+        self.c.set('k1', 'x1')
+        self.c.set('k2', 'x2')
+        self.assertTrue(self.c.restore('/tmp/simpledb.state'))
+        self.assertEqual(self.c.get('k1'), 'v1')
+        self.assertTrue(self.c.get('k2') is None)
+        self.assertEqual(self.c.hget('h1', 'k1'), 'v1')
+        self.assertEqual(self.c.scard('s1'), 2)
+
+        self.c.flushall()
+        self.c.set('k1', 'x1')
+        self.c.set('k2', 'x2')
+        self.assertTrue(self.c.merge('/tmp/simpledb.state'))
+        self.assertEqual(self.c.get('k1'), 'x1')
+        self.assertEqual(self.c.get('k2'), 'x2')
+        self.assertEqual(self.c.hget('h1', 'k1'), 'v1')
+        self.assertEqual(self.c.scard('s1'), 2)
+
 
 if __name__ == '__main__':
     run_queue_server()

@@ -255,25 +255,38 @@ class QueueServer(object):
             'schedule': self._schedule,
             'sets': self._sets}
 
-    def _set_state(self, state):
-        self._hashes = state['hashes']
-        self._kv = state['kv']
-        self._queues = state['queues']
-        self._schedule = state['schedule']
-        self._sets = state['sets']
+    def _set_state(self, state, merge=False):
+        if not merge:
+            self._hashes = state['hashes']
+            self._kv = state['kv']
+            self._queues = state['queues']
+            self._schedule = state['schedule']
+            self._sets = state['sets']
+        else:
+            def merge(orig, updates):
+                orig.update(updates)
+                return orig
+            self._hashes = merge(state['hashes'], self._hashes)
+            self._kv = merge(state['kv'], self._kv)
+            self._queues = merge(state['queues'], self._queues)
+            self._sets = merge(state['sets'], self._sets)
+            self._schedule = state['schedule']
 
     def save_to_disk(self, filename):
         with open(filename, 'wb') as fh:
             pickle.dump(self._get_state(), fh, pickle.HIGHEST_PROTOCOL)
         return True
 
-    def restore_from_disk(self, filename):
+    def restore_from_disk(self, filename, merge=False):
         if not os.path.exists(filename):
             return False
         with open(filename, 'rb') as fh:
             state = pickle.load(fh)
-        self._set_state(state)
+        self._set_state(state, merge=merge)
         return True
+
+    def merge_from_disk(self, filename):
+        return self.restore_from_disk(filename, merge=True)
 
     def get_commands(self):
         timestamp_re = (r'(?P<timestamp>\d{4}-\d{2}-\d{2} '
@@ -351,6 +364,7 @@ class QueueServer(object):
             (b'FLUSHALL', self.flush_all),
             (b'SAVE', self.save_to_disk),
             (b'RESTORE', self.restore_from_disk),
+            (b'MERGE', self.merge_from_disk),
             (b'SHUTDOWN', self.shutdown),
         ))
 
@@ -840,6 +854,7 @@ class Client(object):
     flushall = command('FLUSHALL')
     save = command('SAVE')
     restore = command('RESTORE')
+    merge = command('MERGE')
     shutdown = command('SHUTDOWN')
 
 

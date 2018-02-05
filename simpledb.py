@@ -7,7 +7,6 @@ except ImportError:
     import socket
     Pool = StreamServer = None
 
-from collections import defaultdict
 from collections import deque
 from collections import namedtuple
 from functools import wraps
@@ -255,16 +254,34 @@ class QueueServer(object):
         self._commands = self.get_commands()
         self._protocol = ProtocolHandler()
 
-        #self._hashes = defaultdict(dict)
         self._kv = {}
-        #self._queues = defaultdict(deque)
         self._schedule = []
-        #self._sets = defaultdict(set)
+        self._expiry = []
+        self._expiry_map = {}
 
         self._active_connections = 0
         self._commands_processed = 0
         self._command_errors = 0
         self._connections = 0
+
+    def check_expired(self, key, ts=None):
+        ts = ts or time.time()
+        return key in self._expiry_map and ts > self._expiry_map[key]
+
+    def clean_expired(self, ts=None):
+        ts = ts or time.time()
+        n = 0
+        while self._expiry:
+            expires, key = heapq.heappop(self._expiry)
+            if expires > ts:
+                heapq.heappush((expires, key))
+                break
+
+            if self._expiry_map.get(key) == ts:
+                del self._expiry_map[key]
+                del self._kv[key]
+                n += 1
+        return n
 
     def enforce_datatype(data_type, set_missing=True, subtype=None):
         def decorator(meth):
@@ -276,6 +293,9 @@ class QueueServer(object):
         return decorator
 
     def check_datatype(self, data_type, key, set_missing=True, subtype=None):
+        if key in self._kv and self.check_expired(key):
+            del self._kv[key]
+
         if key in self._kv:
             value = self._kv[key]
             if value.data_type != data_type:
@@ -395,6 +415,7 @@ class QueueServer(object):
             (b'LENGTH_SCHEDULE', self.schedule_length),
 
             # Misc.
+            (b'EXPIRE', self.expires),
             (b'INFO', self.info),
             (b'FLUSHALL', self.flush_all),
             (b'SAVE', self.save_to_disk),
@@ -402,6 +423,11 @@ class QueueServer(object):
             (b'MERGE', self.merge_from_disk),
             (b'SHUTDOWN', self.shutdown),
         ))
+
+    def expires(self, key, nseconds):
+        eta = time.time() + nseconds
+        self._expiry_map[key] = eta
+        heapq.heappush(self._expiry, (eta, key))
 
     @enforce_datatype(QUEUE)
     def lpush(self, key, *values):
@@ -977,6 +1003,7 @@ class Client(object):
     flush_schedule = command('FLUSH_SCHEDULE')
     length_schedule = command('LENGTH_SCHEDULE')
 
+    expire = command('EXPIRE')
     info = command('INFO')
     flushall = command('FLUSHALL')
     save = command('SAVE')

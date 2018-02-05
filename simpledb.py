@@ -482,9 +482,21 @@ class QueueServer(object):
         self._kv[key].value.clear()
         return qlen
 
-    @enforce_datatype(KV)
     def kv_append(self, key, value):
-        self._kv[key] = Value(KV, self._kv[key].value + value)
+        if key not in self._kv:
+            self.kv_set(key, value)
+        else:
+            kv_val = self._kv[key]
+            if kv_val.data_type == QUEUE:
+                if isinstance(value, list):
+                    kv_val.value.extend(value)
+                else:
+                    kv_val.value.append(value)
+            else:
+                try:
+                    kv_val = Value(kv_val.data_type, kv_val.value + value)
+                except:
+                    raise CommandError('Incompatible data-types')
         return self._kv[key].value
 
     def _kv_incr(self, key, n):
@@ -568,7 +580,16 @@ class QueueServer(object):
             return self._kv.pop(key).value
 
     def kv_set(self, key, value):
-        self._kv[key] = Value(KV, value)
+        if isinstance(value, dict):
+            data_type = HASH
+        elif isinstance(value, list):
+            data_type = QUEUE
+            value = deque(value)
+        elif isinstance(value, set):
+            data_type = SET
+        else:
+            data_type = KV
+        self._kv[key] = Value(data_type, value)
         return 1
 
     def kv_setnx(self, key, value):

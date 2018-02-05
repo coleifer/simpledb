@@ -10,6 +10,7 @@ except ImportError:
 from collections import defaultdict
 from collections import deque
 from collections import namedtuple
+from functools import wraps
 from io import BytesIO
 from socket import error as socket_error
 import datetime
@@ -21,6 +22,7 @@ import optparse
 import os
 import pickle
 import sys
+import time
 try:
     import socketserver as ss
 except ImportError:
@@ -71,6 +73,7 @@ Server replies, indicating response type using the first byte:
 * "@" - json string (uses bulk string rules)
 * "*" - array
 * "%" - dict
+* "&" - set
 
 Simple strings: "+string content\r\n"  <-- cannot contain newlines
 
@@ -126,6 +129,7 @@ class ProtocolHandler(object):
             b'@': self.handle_json,
             b'*': self.handle_array,
             b'%': self.handle_dict,
+            b'&': self.handle_set,
         }
 
     def handle_simple_string(self, socket_file):
@@ -163,6 +167,9 @@ class ProtocolHandler(object):
                     for _ in range(num_items * 2)]
         return dict(zip(elements[::2], elements[1::2]))
 
+    def handle_set(self, socket_file):
+        return set(self.handle_array(socket_file))
+
     def handle_request(self, socket_file):
         first_byte = socket_file.read(1)
         if not first_byte:
@@ -193,7 +200,7 @@ class ProtocolHandler(object):
             buf.write(b':%d\r\n' % data)
         elif isinstance(data, Error):
             buf.write(b'-%s\r\n' % encode(data.message))
-        elif isinstance(data, (list, tuple)):
+        elif isinstance(data, (list, tuple, deque)):
             buf.write(b'*%d\r\n' % len(data))
             for item in data:
                 self._write(buf, item)
@@ -202,6 +209,10 @@ class ProtocolHandler(object):
             for key in data:
                 self._write(buf, key)
                 self._write(buf, data[key])
+        elif isinstance(data, set):
+            buf.write(b'&%d\r\n' % len(data))
+            for item in data:
+                self._write(buf, item)
         elif data is None:
             buf.write(b'$-1\r\n')
         elif isinstance(data, datetime.datetime):
@@ -209,6 +220,14 @@ class ProtocolHandler(object):
 
 
 class Shutdown(Exception): pass
+
+
+Value = namedtuple('Value', ('data_type', 'value'))
+
+KV = 0
+HASH = 1
+QUEUE = 2
+SET = 3
 
 
 class QueueServer(object):
@@ -236,40 +255,56 @@ class QueueServer(object):
         self._commands = self.get_commands()
         self._protocol = ProtocolHandler()
 
-        self._hashes = defaultdict(dict)
+        #self._hashes = defaultdict(dict)
         self._kv = {}
-        self._queues = defaultdict(deque)
+        #self._queues = defaultdict(deque)
         self._schedule = []
-        self._sets = defaultdict(set)
+        #self._sets = defaultdict(set)
 
         self._active_connections = 0
         self._commands_processed = 0
         self._command_errors = 0
         self._connections = 0
 
+    def enforce_datatype(data_type, set_missing=True, subtype=None):
+        def decorator(meth):
+            @wraps(meth)
+            def inner(self, key, *args, **kwargs):
+                self.check_datatype(data_type, key, set_missing, subtype)
+                return meth(self, key, *args, **kwargs)
+            return inner
+        return decorator
+
+    def check_datatype(self, data_type, key, set_missing=True, subtype=None):
+        if key in self._kv:
+            value = self._kv[key]
+            if value.data_type != data_type:
+                raise CommandError('Operation against wrong key type.')
+            if subtype is not None and not isinstance(value.value, subtype):
+                raise CommandError('Operation against wrong value type.')
+        elif set_missing:
+            if data_type == HASH:
+                value = {}
+            elif data_type == QUEUE:
+                value = deque()
+            elif data_type == SET:
+                value = set()
+            elif data_type == KV:
+                value = ''
+            self._kv[key] = Value(data_type, value)
+
     def _get_state(self):
-        return {
-            'hashes': self._hashes,
-            'kv': self._kv,
-            'queues': self._queues,
-            'schedule': self._schedule,
-            'sets': self._sets}
+        return {'kv': self._kv, 'schedule': self._schedule}
 
     def _set_state(self, state, merge=False):
         if not merge:
-            self._hashes = state['hashes']
             self._kv = state['kv']
-            self._queues = state['queues']
             self._schedule = state['schedule']
-            self._sets = state['sets']
         else:
             def merge(orig, updates):
                 orig.update(updates)
                 return orig
-            self._hashes = merge(state['hashes'], self._hashes)
             self._kv = merge(state['kv'], self._kv)
-            self._queues = merge(state['queues'], self._queues)
-            self._sets = merge(state['sets'], self._sets)
             self._schedule = state['schedule']
 
     def save_to_disk(self, filename):
@@ -368,144 +403,179 @@ class QueueServer(object):
             (b'SHUTDOWN', self.shutdown),
         ))
 
-    def lpush(self, queue, *values):
-        self._queues[queue].extendleft(values)
+    @enforce_datatype(QUEUE)
+    def lpush(self, key, *values):
+        self._kv[key].value.extendleft(values)
         return len(values)
 
-    def rpush(self, queue, *values):
-        self._queues[queue].extend(values)
+    @enforce_datatype(QUEUE)
+    def rpush(self, key, *values):
+        self._kv[key].value.extend(values)
         return len(values)
 
-    def lpop(self, queue):
+    @enforce_datatype(QUEUE)
+    def lpop(self, key):
         try:
-            return self._queues[queue].popleft()
+            return self._kv[key].value.popleft()
         except IndexError:
             pass
 
-    def rpop(self, queue):
+    @enforce_datatype(QUEUE)
+    def rpop(self, key):
         try:
-            return self._queues[queue].pop()
+            return self._kv[key].value.pop()
         except IndexError:
             pass
 
-    def lrem(self, queue, value):
+    @enforce_datatype(QUEUE)
+    def lrem(self, key, value):
         try:
-            self._queues[queue].remove(value)
+            self._kv[key].value.remove(value)
         except ValueError:
             return 0
         else:
             return 1
 
-    def llen(self, queue):
-        return len(self._queues[queue])
+    @enforce_datatype(QUEUE)
+    def llen(self, key):
+        return len(self._kv[key].value)
 
-    def lindex(self, queue, idx):
+    @enforce_datatype(QUEUE)
+    def lindex(self, key, idx):
         try:
-            return self._queues[queue][idx]
+            return self._kv[key].value[idx]
         except IndexError:
             pass
 
-    def lset(self, queue, idx, value):
+    @enforce_datatype(QUEUE)
+    def lset(self, key, idx, value):
         try:
-            self._queues[queue][idx] = value
+            self._kv[key].value[idx] = value
         except IndexError:
             return 0
         else:
             return 1
 
-    def ltrim(self, queue, start, stop):
-        self._queues[queue] = deque(list(self._queues[queue])[start:stop])
+    @enforce_datatype(QUEUE)
+    def ltrim(self, key, start, stop):
+        trimmed = list(self._kv[key].value)[start:stop]
+        self._kv[key] = Value(QUEUE, deque(trimmed))
+        return len(trimmed)
 
+    @enforce_datatype(QUEUE)
     def rpoplpush(self, src, dest):
+        self.check_datatype(QUEUE, dest, set_missing=True)
         try:
-            self._queues[dest].appendleft(self._queues[src].pop())
+            self._kv[dest].value.appendleft(self._kv[src].value.pop())
         except IndexError:
             return 0
         else:
             return 1
 
-    def lrange(self, queue, start, end=None):
-        return list(self._queues[queue])[start:end]
+    @enforce_datatype(QUEUE)
+    def lrange(self, key, start, end=None):
+        return list(self._kv[key].value)[start:end]
 
-    def lflush(self, queue):
-        qlen = self.llen(queue)
-        self._queues[queue].clear()
+    @enforce_datatype(QUEUE)
+    def lflush(self, key):
+        qlen = len(self._kv[key].value)
+        self._kv[key].value.clear()
         return qlen
 
+    @enforce_datatype(KV)
     def kv_append(self, key, value):
-        self._kv.setdefault(key, '')
-        self._kv[key] += value
-        return self._kv[key]
+        self._kv[key] = Value(KV, self._kv[key].value + value)
+        return self._kv[key].value
 
     def _kv_incr(self, key, n):
-        self._kv.setdefault(key, 0)
-        self._kv[key] += n
-        return self._kv[key]
+        if key in self._kv:
+            value = self._kv[key].value + n
+        else:
+            value = n
+        self._kv[key] = Value(KV, value)
+        return value
 
+    @enforce_datatype(KV, set_missing=False, subtype=(float, int))
     def kv_decr(self, key):
         return self._kv_incr(key, -1)
 
+    @enforce_datatype(KV, set_missing=False, subtype=(float, int))
     def kv_decrby(self, key, n):
         return self._kv_incr(key, -1 * n)
 
     def kv_delete(self, key):
         if key in self._kv:
             del self._kv[key]
-        elif key in self._hashes:
-            del self._hashes[key]
-        elif key in self._queues:
-            del self._queues[key]
-        elif key in self._sets:
-            del self._sets[key]
-        else:
-            return 0
-        return 1
+            return 1
+        return 0
 
     def kv_exists(self, key):
         return 1 if key in self._kv else 0
 
     def kv_get(self, key):
-        return self._kv.get(key)
+        if key in self._kv:
+            return self._kv[key].value
 
     def kv_getset(self, key, value):
-        orig = self._kv.get(key)
-        self._kv[key] = value
+        if key in self._kv:
+            orig = self._kv[key].value
+        else:
+            orig = None
+        self._kv[key] = Value(KV, value)
         return orig
 
+    @enforce_datatype(KV, set_missing=False, subtype=(float, int))
     def kv_incr(self, key):
         return self._kv_incr(key, 1)
 
+    @enforce_datatype(KV, set_missing=False, subtype=(float, int))
     def kv_incrby(self, key, n):
         return self._kv_incr(key, n)
 
     def kv_mget(self, *keys):
-        return [self._kv.get(key) for key in keys]
+        accum = []
+        for key in keys:
+            if key in self._kv:
+                accum.append(self._kv[key].value)
+            else:
+                accum.append(None)
+        return accum
 
     def kv_mpop(self, *keys):
-        return [self._kv.pop(key, None) for key in keys]
+        accum = []
+        for key in keys:
+            if key in self._kv:
+                accum.append(self._kv.pop(key).value)
+            else:
+                accum.append(None)
+        return accum
 
     def kv_mset(self, __data=None, **kwargs):
         n = 0
+        data = {}
         if __data is not None:
-            self._kv.update(__data)
-            n += len(__data)
-        if kwargs:
-            self._kv.update(kwargs)
-            n += len(kwargs)
+            data.update(__data)
+        if kwargs is not None:
+            data.update(kwargs)
+
+        for key in data:
+            self._kv[key] = Value(KV, data[key])
+            n += 1
         return n
 
     def kv_pop(self, key):
-        return self._kv.pop(key, None)
+        if key in self._kv:
+            return self._kv.pop(key).value
 
     def kv_set(self, key, value):
-        self._kv[key] = value
+        self._kv[key] = Value(KV, value)
         return 1
 
     def kv_setnx(self, key, value):
         if key in self._kv:
             return 0
         else:
-            self._kv[key] = value
+            self._kv[key] = Value(KV, value)
             return 1
 
     def kv_len(self):
@@ -526,125 +596,162 @@ class QueueServer(object):
         except ValueError:
             raise CommandError('Timestamp must be formatted Y-m-d H:M:S')
 
+    @enforce_datatype(HASH)
     def hdel(self, key, field):
-        if self.hexists(key, field):
-            del self._hashes[key][field]
+        value = self._kv[key].value
+        if field in value:
+            del value[field]
             return 1
         return 0
 
+    @enforce_datatype(HASH)
     def hexists(self, key, field):
-        return 1 if field in self._hashes[key] else 0
+        value = self._kv[key].value
+        return 1 if field in value else 0
 
+    @enforce_datatype(HASH)
     def hget(self, key, field):
-        return self._hashes[key].get(field)
+        return self._kv[key].value.get(field)
 
+    @enforce_datatype(HASH)
     def hgetall(self, key):
-        return self._hashes[key]
+        return self._kv[key].value
 
+    @enforce_datatype(HASH)
     def hincrby(self, key, field, incr=1):
-        self._hashes[key].setdefault(field, 0)
-        self._hashes[key][field] += incr
-        return self._hashes[key][field]
+        self._kv[key].value.setdefault(field, 0)
+        self._kv[key].value[field] += incr
+        return self._kv[key].value[field]
 
+    @enforce_datatype(HASH)
     def hkeys(self, key):
-        return list(self._hashes[key])
+        return list(self._kv[key].value)
 
+    @enforce_datatype(HASH)
     def hlen(self, key):
-        return len(self._hashes[key])
+        return len(self._kv[key].value)
 
+    @enforce_datatype(HASH)
     def hmget(self, key, *fields):
         accum = {}
+        value = self._kv[key].value
         for field in fields:
-            accum[field] = self._hashes[key].get(field)
+            accum[field] = value.get(field)
         return accum
 
+    @enforce_datatype(HASH)
     def hmset(self, key, data):
-        self._hashes[key].update(data)
+        self._kv[key].value.update(data)
         return len(data)
 
+    @enforce_datatype(HASH)
     def hset(self, key, field, value):
-        self._hashes[key][field] = value
+        self._kv[key].value[field] = value
         return 1
 
+    @enforce_datatype(HASH)
     def hsetnx(self, key, field, value):
-        if field not in self._hashes[key]:
-            self._hashes[key][field] = value
+        kval = self._kv[key].value
+        if field not in kval:
+            kval[field] = value
             return 1
         return 0
 
+    @enforce_datatype(HASH)
     def hvals(self, key):
-        return list(self._hashes[key].values())
+        return list(self._kv[key].value.values())
 
+    @enforce_datatype(SET)
     def sadd(self, key, *members):
-        self._sets[key].update(members)
-        return len(self._sets[key])
+        self._kv[key].value.update(members)
+        return len(self._kv[key].value)
 
+    @enforce_datatype(SET)
     def scard(self, key):
-        return len(self._sets[key])
+        return len(self._kv[key].value)
 
+    @enforce_datatype(SET)
     def sdiff(self, key, *keys):
-        src = set(self._sets[key])
+        src = set(self._kv[key].value)
         for key in keys:
-            src -= self._sets[key]
+            self.check_datatype(SET, key)
+            src -= self._kv[key].value
         return list(src)
 
+    @enforce_datatype(SET)
     def sdiffstore(self, dest, key, *keys):
-        src = set(self._sets[key])
+        src = set(self._kv[key].value)
         for key in keys:
-            src -= self._sets[key]
-        self._sets[dest] = src
+            self.check_datatype(SET, key)
+            src -= self._kv[key].value
+        self.check_datatype(SET, dest)
+        self._kv[dest] = Value(SET, src)
         return len(src)
 
+    @enforce_datatype(SET)
     def sinter(self, key, *keys):
-        src = set(self._sets[key])
+        src = set(self._kv[key].value)
         for key in keys:
-            src &= self._sets[key]
+            self.check_datatype(SET, key)
+            src &= self._kv[key].value
         return list(src)
 
+    @enforce_datatype(SET)
     def sinterstore(self, dest, key, *keys):
-        src = set(self._sets[key])
+        src = set(self._kv[key].value)
         for key in keys:
-            src &= self._sets[key]
-        self._sets[dest] = src
+            self.check_datatype(SET, key)
+            src &= self._kv[key].value
+        self.check_datatype(SET, dest)
+        self._kv[dest] = Value(SET, src)
         return len(src)
 
+    @enforce_datatype(SET)
     def sismember(self, key, member):
-        return 1 if member in self._sets[key] else 0
+        return 1 if member in self._kv[key].value else 0
 
+    @enforce_datatype(SET)
     def smembers(self, key):
-        return list(self._sets[key])
+        return self._kv[key].value
 
+    @enforce_datatype(SET)
     def spop(self, key, n=1):
         accum = []
         for _ in range(n):
             try:
-                accum.append(self._sets[key].pop())
+                accum.append(self._kv[key].value.pop())
             except KeyError:
                 break
         return accum
 
+    @enforce_datatype(SET)
     def srem(self, key, *members):
         ct = 0
         for member in members:
             try:
-                self._sets[key].remove(member)
+                self._kv[key].value.remove(member)
             except KeyError:
                 pass
             else:
                 ct += 1
         return ct
 
+    @enforce_datatype(SET)
     def sunion(self, key, *keys):
-        src = set(self._sets[key])
+        src = set(self._kv[key].value)
         for key in keys:
-            src |= self._sets[key]
+            self.check_datatype(SET, key)
+            src |= self._kv[key].value
         return list(src)
 
+    @enforce_datatype(SET)
     def sunionstore(self, dest, key, *keys):
-        src = set(self._sets[key])
+        src = set(self._kv[key].value)
         for key in keys:
-            src |= self._sets[key]
-        self._sets[dest] = src
+            self.check_datatype(SET, key)
+            src |= self._kv[key].value
+        self.check_datatype(SET, dest)
+        self._kv[dest] = Value(SET, src)
         return len(src)
 
     def schedule_add(self, timestamp, data):
@@ -673,13 +780,12 @@ class QueueServer(object):
             'active_connections': self._active_connections,
             'commands_processed': self._commands_processed,
             'command_errors': self._command_errors,
-            'connections': self._connections}
+            'connections': self._connections,
+            'keys': len(self._kv),
+            'timestamp': time.time()}
 
     def flush_all(self):
-        self._hashes = defaultdict(dict)
-        self._queues = defaultdict(deque)
-        self._sets = defaultdict(set)
-        self.kv_flush()
+        self._kv.clear()
         self.schedule_flush()
         return 1
 

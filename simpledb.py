@@ -1011,6 +1011,24 @@ class Client(object):
     merge = command('MERGE')
     shutdown = command('SHUTDOWN')
 
+    def __getitem__(self, key):
+        if isinstance(key, (list, tuple)):
+            return self.mget(*key)
+        else:
+            return self.get(key)
+
+    def __setitem__(self, key, value):
+        self.set(key, value)
+
+    def __delitem__(self, key):
+        self.delete(key)
+
+    def __contains__(self, key):
+        return self.exists(key)
+
+    def __len__(self):
+        return self.length()
+
 
 def get_option_parser():
     parser = optparse.OptionParser()

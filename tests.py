@@ -26,7 +26,7 @@ def run_queue_server():
         t = threading.Thread(target=server.run)
         t.daemon = True
         t.start()
-    return t
+    return t, server
 
 
 class KeyPartial(object):
@@ -41,6 +41,7 @@ class TestMiniRedisDatabase(unittest.TestCase):
     def setUp(self):
         self.c = Client(host=TEST_HOST, port=TEST_PORT)
         self.c.connect()
+        self.c.flush()
 
     def tearDown(self):
         self.c.close()
@@ -117,7 +118,15 @@ class TestMiniRedisDatabase(unittest.TestCase):
         self.assertEqual(self.c.hget('h1', 'k1'), 'v1')
         self.assertEqual(self.c.scard('s1'), 2)
 
+    def test_expiry(self):
+        self.c.mset({'k1': 'v1', 'k2': 'v2', 'k3': 'v3'})
+
+        # Make it appear to expire in the past.
+        self.c.expire('k2', -1)
+        self.c.expire('k3', 3)
+        self.assertEqual(self.c.mget('k1', 'k2', 'k3'), ['v1', None, 'v3'])
+
 
 if __name__ == '__main__':
-    run_queue_server()
+    server_t, server = run_queue_server()
     unittest.main(argv=sys.argv)

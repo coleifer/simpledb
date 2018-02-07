@@ -85,11 +85,17 @@ Bulk String: "$number of bytes\r\nstring data\r\n"
 * Empty string: "$0\r\n\r\n"
 * NULL: "$-1\r\n"
 
+Bulk unicode string (encoded as UTF-8): "^number of bytes\r\ndata\r\n"
+
+JSON string: "@number of bytes\r\nJSON string\r\n"
+
 Array: "*number of elements\r\n...elements..."
 
 * Empty array: "*0\r\n"
 
-And a new data-type, dictionaries: "%number of elements\r\n...elements..."
+Dictionary: "%number of elements\r\n...key0...value0...key1...value1..\r\n"
+
+Set: "&number of elements\r\n...elements..."
 """
 if sys.version_info[0] == 3:
     unicode = str
@@ -267,6 +273,9 @@ class QueueServer(object):
     def check_expired(self, key, ts=None):
         ts = ts or time.time()
         return key in self._expiry_map and ts > self._expiry_map[key]
+
+    def unexpire(self, key):
+        self._expiry_map.pop(key, None)
 
     def clean_expired(self, ts=None):
         ts = ts or time.time()
@@ -548,14 +557,14 @@ class QueueServer(object):
         return 0
 
     def kv_exists(self, key):
-        return 1 if key in self._kv else 0
+        return 1 if key in self._kv and not self.check_expired(key) else 0
 
     def kv_get(self, key):
-        if key in self._kv:
+        if key in self._kv and not self.check_expired(key):
             return self._kv[key].value
 
     def kv_getset(self, key, value):
-        if key in self._kv:
+        if key in self._kv and not self.check_expired(key):
             orig = self._kv[key].value
         else:
             orig = None
@@ -573,7 +582,7 @@ class QueueServer(object):
     def kv_mget(self, *keys):
         accum = []
         for key in keys:
-            if key in self._kv:
+            if key in self._kv and not self.check_expired(key):
                 accum.append(self._kv[key].value)
             else:
                 accum.append(None)
@@ -582,7 +591,7 @@ class QueueServer(object):
     def kv_mpop(self, *keys):
         accum = []
         for key in keys:
-            if key in self._kv:
+            if key in self._kv and not self.check_expired(key):
                 accum.append(self._kv.pop(key).value)
             else:
                 accum.append(None)
@@ -597,12 +606,13 @@ class QueueServer(object):
             data.update(kwargs)
 
         for key in data:
+            self.unexpire(key)
             self._kv[key] = Value(KV, data[key])
             n += 1
         return n
 
     def kv_pop(self, key):
-        if key in self._kv:
+        if key in self._kv and not self.check_expired(key):
             return self._kv.pop(key).value
 
     def kv_set(self, key, value):
@@ -615,13 +625,15 @@ class QueueServer(object):
             data_type = SET
         else:
             data_type = KV
+        self.unexpire(key)
         self._kv[key] = Value(data_type, value)
         return 1
 
     def kv_setnx(self, key, value):
-        if key in self._kv:
+        if key in self._kv and not self.check_expired(key):
             return 0
         else:
+            self.unexpire(key)
             self._kv[key] = Value(KV, value)
             return 1
 
@@ -631,6 +643,8 @@ class QueueServer(object):
     def kv_flush(self):
         kvlen = self.kv_len()
         self._kv.clear()
+        self._expiry = []
+        self._expiry_map = {}
         return kvlen
 
     def _decode_timestamp(self, timestamp):
@@ -832,7 +846,7 @@ class QueueServer(object):
             'timestamp': time.time()}
 
     def flush_all(self):
-        self._kv.clear()
+        self.kv_flush()
         self.schedule_flush()
         return 1
 

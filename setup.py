@@ -25,4 +25,6 @@ setup(
         'Programming Language :: Python',
     ],
     scripts=['simpledb.py'],
+    package_data={'': ['README.md'], },
+    include_package_data=True,
     test_suite='tests')

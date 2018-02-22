@@ -1121,4 +1121,7 @@ if __name__ == '__main__':
     print(':   ,    , .\'')
     print('\'. (___.\'_/')
     print(' \x1b[33m((\x1b[32m-\x1b[33m((\x1b[32m-\'\'\x1b[0m')
-    server.run()
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        print('\x1b[1;31mshutting down\x1b[0m')

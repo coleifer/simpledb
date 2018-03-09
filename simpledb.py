@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 try:
     import gevent
     from gevent import socket

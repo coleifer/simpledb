@@ -46,6 +46,28 @@ to run with debug logging on port 31339, for example:
 $ simpledb.py -d -p 31339
 ```
 
+#### docker
+
+simpledb ships with a [Dockerfile](https://github.com/coleifer/simpledb/blob/master/docker/Dockerfile)
+or can be pulled from dockerhub as *coleifer/simpledb*. The dockerfile setups
+up a volume at `/var/lib/simpledb` and exposes port `31337`.
+
+running:
+
+```console
+
+$ docker run -it --rm -p 31337:31337 coleifer/simpledb
+```
+
+building:
+
+```console
+
+$ cd simpledb/docker
+$ docker build -t simpledb .
+$ docker run -d -p 31337:31337 -v simpledb-logs:/var/lib/simpledb simpledb
+```
+
 #### usage
 
 the server is capable of storing the following data-types natively:

@@ -226,6 +226,7 @@ class ProtocolHandler(object):
             self._write(buf, str(data))
 
 
+class ClientQuit(Exception): pass
 class Shutdown(Exception): pass
 
 
@@ -432,6 +433,7 @@ class QueueServer(object):
             (b'SAVE', self.save_to_disk),
             (b'RESTORE', self.restore_from_disk),
             (b'MERGE', self.merge_from_disk),
+            (b'QUIT', self.client_quit),
             (b'SHUTDOWN', self.shutdown),
         ))
 
@@ -857,6 +859,9 @@ class QueueServer(object):
             command = command.encode('utf-8')
         self._commands[command] = callback
 
+    def client_quit(self):
+        raise ClientQuit('client closed connection')
+
     def shutdown(self):
         raise Shutdown('shutting down')
 
@@ -872,6 +877,10 @@ class QueueServer(object):
                 self.request_response(socket_file)
             except EOFError:
                 logger.info('Client went away: %s:%s' % address)
+                socket_file.close()
+                break
+            except ClientQuit:
+                logger.info('Client exited: %s:%s.' % address)
                 break
             except Exception as exc:
                 logger.exception('Error processing command.')
@@ -886,6 +895,8 @@ class QueueServer(object):
             logger.info('Shutting down')
             self._protocol.write_response(socket_file, 1)
             raise KeyboardInterrupt()
+        except ClientQuit:
+            raise
         except CommandError as command_error:
             resp = Error(command_error.message)
             self._command_errors += 1

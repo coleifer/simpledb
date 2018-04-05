@@ -383,12 +383,15 @@ class QueueServer(object):
             (b'GETSET', self.kv_getset),
             (b'INCR', self.kv_incr),
             (b'INCRBY', self.kv_incrby),
+            (b'MDELETE', self.kv_mdelete),
             (b'MGET', self.kv_mget),
             (b'MPOP', self.kv_mpop),
             (b'MSET', self.kv_mset),
+            (b'MSETEX', self.kv_msetex),
             (b'POP', self.kv_pop),
             (b'SET', self.kv_set),
             (b'SETNX', self.kv_setnx),
+            (b'SETEX', self.kv_setex),
             (b'LEN', self.kv_len),
             (b'FLUSH', self.kv_flush),
 
@@ -427,7 +430,7 @@ class QueueServer(object):
             (b'LENGTH_SCHEDULE', self.schedule_length),
 
             # Misc.
-            (b'EXPIRE', self.expires),
+            (b'EXPIRE', self.expire),
             (b'INFO', self.info),
             (b'FLUSHALL', self.flush_all),
             (b'SAVE', self.save_to_disk),
@@ -437,7 +440,7 @@ class QueueServer(object):
             (b'SHUTDOWN', self.shutdown),
         ))
 
-    def expires(self, key, nseconds):
+    def expire(self, key, nseconds):
         eta = time.time() + nseconds
         self._expiry_map[key] = eta
         heapq.heappush(self._expiry, (eta, key))
@@ -583,6 +586,17 @@ class QueueServer(object):
     def kv_incrby(self, key, n):
         return self._kv_incr(key, n)
 
+    def kv_mdelete(self, *keys):
+        n = 0
+        for key in keys:
+            try:
+                del self._kv[key]
+            except KeyError:
+                pass
+            else:
+                n += 1
+        return n
+
     def kv_mget(self, *keys):
         accum = []
         for key in keys:
@@ -615,6 +629,11 @@ class QueueServer(object):
             n += 1
         return n
 
+    def kv_msetex(self, data, expires):
+        self.kv_mset(data)
+        for key in data:
+            self.expire(key, expires)
+
     def kv_pop(self, key):
         if key in self._kv and not self.check_expired(key):
             return self._kv.pop(key).value
@@ -640,6 +659,11 @@ class QueueServer(object):
             self.unexpire(key)
             self._kv[key] = Value(KV, value)
             return 1
+
+    def kv_setex(self, key, value, expires):
+        self.kv_set(key, value)
+        self.expire(key, expires)
+        return 1
 
     def kv_len(self):
         return len(self._kv)
@@ -990,11 +1014,14 @@ class Client(object):
     getset = command('GETSET')
     incr = command('INCR')
     incrby = command('INCRBY')
+    mdelete = command('MDELETE')
     mget = command('MGET')
     mpop = command('MPOP')
     mset = command('MSET')
+    msetex = command('MSETEX')
     pop = command('POP')
     set = command('SET')
+    setex = command('SETEX')
     setnx = command('SETNX')
     length = command('LEN')
     flush = command('FLUSH')

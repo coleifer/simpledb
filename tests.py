@@ -42,11 +42,7 @@ class KeyPartial(object):
 class TestMiniRedisDatabase(unittest.TestCase):
     def setUp(self):
         self.c = Client(host=TEST_HOST, port=TEST_PORT)
-        self.c.connect()
         self.c.flush()
-
-    def tearDown(self):
-        self.c.close()
 
     def test_list(self):
         lq = KeyPartial(self.c, 'queue')

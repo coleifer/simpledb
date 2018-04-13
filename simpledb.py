@@ -5,9 +5,12 @@ try:
     from gevent import socket
     from gevent.pool import Pool
     from gevent.server import StreamServer
+    from gevent.thread import get_ident
+    HAVE_GEVENT = True
 except ImportError:
     import socket
     Pool = StreamServer = None
+    HAVE_GEVENT = False
 
 from collections import deque
 from collections import namedtuple
@@ -24,6 +27,10 @@ import os
 import pickle
 import sys
 import time
+try:
+    from threading import get_ident as get_ident_t
+except ImportError:
+    from thread import get_ident as get_ident_t
 try:
     import socketserver as ss
 except ImportError:
@@ -229,6 +236,10 @@ class ProtocolHandler(object):
 class ClientQuit(Exception): pass
 class Shutdown(Exception): pass
 
+class ServerError(Exception): pass
+class ServerDisconnect(ServerError): pass
+class ServerInternalError(ServerError): pass
+
 
 Value = namedtuple('Value', ('data_type', 'value'))
 
@@ -239,7 +250,7 @@ SET = 3
 
 
 class QueueServer(object):
-    def __init__(self, host='127.0.0.1', port=31337, max_clients=64,
+    def __init__(self, host='127.0.0.1', port=31337, max_clients=1024,
                  use_gevent=True):
         self._host = host
         self._port = port
@@ -918,8 +929,9 @@ class QueueServer(object):
         except Shutdown:
             logger.info('Shutting down')
             self._protocol.write_response(socket_file, 1)
-            raise KeyboardInterrupt()
+            raise KeyboardInterrupt
         except ClientQuit:
+            self._protocol.write_response(socket_file, 1)
             raise
         except CommandError as command_error:
             resp = Error(command_error.message)
@@ -951,41 +963,103 @@ class QueueServer(object):
         return self._commands[command](*data[1:])
 
 
-class Client(object):
-    def __init__(self, host='127.0.0.1', port=31337):
-        self._host = host
-        self._port = port
-        self._socket = None
-        self._fh = None
-        self._protocol = ProtocolHandler()
-        self._is_closed = True
+class SocketPool(object):
+    def __init__(self, host, port, max_age=60, timeout=None):
+        self.host = host
+        self.port = port
+        self.max_age = max_age
+        self.timeout = timeout
+        self.free = []
+        self.in_use = {}
+        self._tid = get_ident if HAVE_GEVENT else get_ident_t
 
-    def connect(self):
-        if not self._is_closed:
-            self.close()
+    def checkout(self):
+        now = time.time()
+        tid = self._tid()
+        if tid in self.in_use:
+            sock = self.in_use[tid]
+            if sock.closed:
+                del self.in_use[tid]
+            else:
+                return self.in_use[tid]
 
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket.connect((self._host, self._port))
-        self._fh = self._socket.makefile('rwb')
-        self._is_closed = False
-        return True
+        while self.free:
+            ts, sock = heapq.heappop(self.free)
+            if ts < now - self.max_age:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            else:
+                self.in_use[tid] = sock
+                return sock
+
+        sock = self.create_socket_file()
+        self.in_use[tid] = sock
+        return sock
+
+    def create_socket_file(self):
+        conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conn.connect((self.host, self.port))
+        if self.timeout:
+            conn.settimeout(self.timeout)
+        return conn.makefile('rwb')
+
+    def checkin(self):
+        tid = self._tid()
+        if tid in self.in_use:
+            sock = self.in_use.pop(tid)
+            if not sock.closed:
+                heapq.heappush(self.free, (time.time(), sock))
+            return True
+        return False
 
     def close(self):
-        if self._is_closed:
-            return False
+        tid = self._tid()
+        sock = self.in_use.pop(tid, None)
+        if sock:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            return True
+        return False
 
-        self._socket.close()
-        self._is_closed = True
-        return True
+
+class Client(object):
+    def __init__(self, host='127.0.0.1', port=31337, timeout=None,
+                 pool_max_age=60):
+        self._host = host
+        self._port = port
+        self._timeout = timeout
+        self._socket_pool = SocketPool(host, port, pool_max_age, timeout)
+        self._fh = None
+        self._protocol = ProtocolHandler()
 
     def execute(self, *args):
-        if self._is_closed:
-            self.connect()
-        self._protocol.write_response(self._fh, args)
-        resp = self._protocol.handle_request(self._fh)
+        conn = self._socket_pool.checkout()
+        close_conn = args[0] in ('QUIT', 'SHUTDOWN')
+        self._protocol.write_response(conn, args)
+        try:
+            resp = self._protocol.handle_request(conn)
+        except EOFError:
+            self._socket_pool.close()
+            raise ServerDisconnect('server went away')
+        except Exception:
+            self._socket_pool.close()
+            raise ServerInternalError('internal server error')
+        else:
+            if close_conn:
+                self._socket_pool.close()
+            else:
+                self._socket_pool.checkin()
         if isinstance(resp, Error):
             raise CommandError(resp.message)
         return resp
+
+    def close(self):
+        self.execute('QUIT')
 
     def command(cmd):
         def method(self, *args):
@@ -1063,6 +1137,7 @@ class Client(object):
     save = command('SAVE')
     restore = command('RESTORE')
     merge = command('MERGE')
+    quit = command('QUIT')
     shutdown = command('SHUTDOWN')
 
     def __getitem__(self, key):
@@ -1095,7 +1170,7 @@ def get_option_parser():
                       help='Use threads instead of gevent.')
     parser.add_option('-H', '--host', default='127.0.0.1', dest='host',
                       help='Host to listen on.')
-    parser.add_option('-m', '--max-clients', default=64, dest='max_clients',
+    parser.add_option('-m', '--max-clients', default=1024, dest='max_clients',
                       help='Maximum number of clients.', type=int)
     parser.add_option('-p', '--port', default=31337, dest='port',
                       help='Port to listen on.', type=int)

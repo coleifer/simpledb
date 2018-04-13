@@ -964,11 +964,10 @@ class QueueServer(object):
 
 
 class SocketPool(object):
-    def __init__(self, host, port, max_age=60, timeout=None):
+    def __init__(self, host, port, max_age=60):
         self.host = host
         self.port = port
         self.max_age = max_age
-        self.timeout = timeout
         self.free = []
         self.in_use = {}
         self._tid = get_ident if HAVE_GEVENT else get_ident_t
@@ -1002,8 +1001,6 @@ class SocketPool(object):
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         conn.connect((self.host, self.port))
-        if self.timeout:
-            conn.settimeout(self.timeout)
         return conn.makefile('rwb')
 
     def checkin(self):
@@ -1028,13 +1025,10 @@ class SocketPool(object):
 
 
 class Client(object):
-    def __init__(self, host='127.0.0.1', port=31337, timeout=None,
-                 pool_max_age=60):
+    def __init__(self, host='127.0.0.1', port=31337, pool_max_age=60):
         self._host = host
         self._port = port
-        self._timeout = timeout
-        self._socket_pool = SocketPool(host, port, pool_max_age, timeout)
-        self._fh = None
+        self._socket_pool = SocketPool(host, port, pool_max_age)
         self._protocol = ProtocolHandler()
 
     def execute(self, *args):

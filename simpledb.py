@@ -956,6 +956,7 @@ class QueueServer(object):
 
         command = data[0].upper()
         if command not in self._commands:
+            import ipdb; ipdb.set_trace()
             raise CommandError('Unrecognized command: %s' % command)
         else:
             logger.debug('Received %s', decode(command))
@@ -1033,7 +1034,7 @@ class Client(object):
 
     def execute(self, *args):
         conn = self._socket_pool.checkout()
-        close_conn = args[0] in ('QUIT', 'SHUTDOWN')
+        close_conn = args[0] in (b'QUIT', b'SHUTDOWN')
         self._protocol.write_response(conn, args)
         try:
             resp = self._protocol.handle_request(conn)
@@ -1053,7 +1054,7 @@ class Client(object):
         return resp
 
     def close(self):
-        self.execute('QUIT')
+        self.execute(b'QUIT')
 
     def command(cmd):
         def method(self, *args):

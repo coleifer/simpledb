@@ -30,5 +30,6 @@ for i in range(t):
 for g in greenlets:
     g.join()
 
+client.flush()
 stop = time.time()
 print('done. slept=%s, took %.2f for %s threads.' % (n, stop - start, t))

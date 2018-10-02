@@ -297,10 +297,10 @@ class QueueServer(object):
         while self._expiry:
             expires, key = heapq.heappop(self._expiry)
             if expires > ts:
-                heapq.heappush((expires, key))
+                heapq.heappush(self._expiry, (expires, key))
                 break
 
-            if self._expiry_map.get(key) == ts:
+            if self._expiry_map.get(key) == expires:
                 del self._expiry_map[key]
                 del self._kv[key]
                 n += 1
@@ -956,7 +956,6 @@ class QueueServer(object):
 
         command = data[0].upper()
         if command not in self._commands:
-            import ipdb; ipdb.set_trace()
             raise CommandError('Unrecognized command: %s' % command)
         else:
             logger.debug('Received %s', decode(command))

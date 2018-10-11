@@ -59,6 +59,9 @@ class ThreadedStreamServer(object):
         self.stream_server = ThreadedServer(self.address, RequestHandler)
         self.stream_server.serve_forever()
 
+    def stop(self):
+        self.stream_server.shutdown()
+
 
 class CommandError(Exception):
     def __init__(self, message):

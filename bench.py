@@ -1,16 +1,9 @@
-from simpledb import QueueServer, ProtocolHandler, Client
+from gevent import monkey; monkey.patch_all()
+
+from simpledb import Client
 
 import contextlib
-import threading
 import time
-
-
-def make_server():
-    server = QueueServer(use_gevent=False)
-    t = threading.Thread(target=server.run)
-    t.daemon = True
-    t.start()
-    return server, t
 
 
 @contextlib.contextmanager
@@ -48,16 +41,11 @@ def run_benchmark(client):
 
 
 def main():
-    server, t = make_server()
-    time.sleep(0.1)
-
     client = Client()
-    client.connect()
 
     try:
         run_benchmark(client)
     finally:
-        client.shutdown()
         client.close()
 
 

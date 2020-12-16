@@ -24,6 +24,7 @@ def run_queue_server():
                          use_gevent=gevent is not None)
     if gevent is not None:
         t = gevent.spawn(server.run)
+        gevent.sleep()
     else:
         t = threading.Thread(target=server.run)
         t.daemon = True

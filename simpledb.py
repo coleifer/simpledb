@@ -371,7 +371,7 @@ class QueueServer(object):
 
     def get_commands(self):
         timestamp_re = (r'(?P<timestamp>\d{4}-\d{2}-\d{2} '
-                        '\d{2}:\d{2}:\d{2}(?:\.\d+)?)')
+                        r'\d{2}:\d{2}:\d{2}(?:\.\d+)?)')
         return dict((
             # Queue commands.
             (b'LPUSH', self.lpush),

@@ -11,8 +11,11 @@ import sys
 import threading
 import unittest
 
+import simpledb
 from simpledb import Client
+from simpledb import CommandError
 from simpledb import QueueServer
+from simpledb import SocketPool
 
 
 TEST_HOST = '127.0.0.1'
@@ -82,6 +85,41 @@ class TestMiniRedisDatabase(unittest.TestCase):
 
         kp.set([b'foo', b'bar', b'baz'])
         self.assertEqual(kp.get(), [b'foo', b'bar', b'baz'])
+
+    def test_append_string(self):
+        self.c.set('s1', 'abc')
+        self.assertEqual(self.c.append('s1', 'def'), 'abcdef')
+        self.assertEqual(self.c.get('s1'), 'abcdef')
+        self.assertRaises(CommandError, self.c.append, 's1', 42)
+        self.assertEqual(self.c.get('s1'), 'abcdef')
+
+    def test_float_values(self):
+        self.c.set('f1', 3.14)
+        self.assertEqual(self.c.get('f1'), 3.14)
+        self.assertEqual(self.c.incrby('f2', 2.5), 2.5)
+        self.assertEqual(self.c.incrby('f2', 0.25), 2.75)
+        self.c.set('f3', 1.5e100)
+        self.assertEqual(self.c.get('f3'), 1.5e100)
+
+    def test_pool_checkin_timestamp_tie(self):
+        # Socket files are not orderable, so two checkins landing on the
+        # same timestamp must not trip a TypeError comparing heap entries.
+        pool = SocketPool(TEST_HOST, TEST_PORT)
+        pool.in_use['t1'] = pool.create_socket_file()
+        pool.in_use['t2'] = pool.create_socket_file()
+
+        real_time = simpledb.time.time
+        simpledb.time.time = lambda: 100.0
+        try:
+            pool._tid = lambda: 't1'
+            self.assertTrue(pool.checkin())
+            pool._tid = lambda: 't2'
+            self.assertTrue(pool.checkin())
+        finally:
+            simpledb.time.time = real_time
+
+        for entry in pool.free:
+            entry[-1].close()
 
     def test_incr_decr(self):
         self.assertEqual(self.c.incr('i'), 1)

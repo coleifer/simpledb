@@ -20,6 +20,7 @@ from socket import error as socket_error
 import datetime
 import heapq
 import importlib
+import itertools
 import json
 import logging
 import optparse
@@ -157,9 +158,10 @@ class ProtocolHandler(object):
 
     def handle_integer(self, socket_file):
         number = socket_file.readline().rstrip(b'\r\n')
-        if b'.' in number:
-            return float(number)
-        return int(number)
+        try:
+            return int(number)
+        except ValueError:
+            return float(number)  # Handles "3.14", "1e+100", "inf", "nan".
 
     def handle_string(self, socket_file):
         length = int(socket_file.readline().rstrip(b'\r\n'))
@@ -213,8 +215,10 @@ class ProtocolHandler(object):
             buf.write(b'^%d\r\n%s\r\n' % (len(bdata), bdata))
         elif data is True or data is False:
             buf.write(b':%d\r\n' % (1 if data else 0))
-        elif isinstance(data, (int, float)):
+        elif isinstance(data, int):
             buf.write(b':%d\r\n' % data)
+        elif isinstance(data, float):
+            buf.write(b':%s\r\n' % encode(repr(data)))
         elif isinstance(data, Error):
             buf.write(b'-%s\r\n' % encode(data.message))
         elif isinstance(data, (list, tuple, deque)):
@@ -550,7 +554,8 @@ class QueueServer(object):
                     kv_val.value.append(value)
             else:
                 try:
-                    kv_val = Value(kv_val.data_type, kv_val.value + value)
+                    self._kv[key] = Value(kv_val.data_type,
+                                          kv_val.value + value)
                 except Exception:
                     raise CommandError('Incompatible data-types')
         return self._kv[key].value
@@ -974,6 +979,9 @@ class SocketPool(object):
         self.free = []
         self.in_use = {}
         self._tid = get_ident if HAVE_GEVENT else get_ident_t
+        # Tie-breaker for the "free" heap: socket files aren't orderable, so
+        # entries with equal timestamps would raise TypeError on comparison.
+        self._seq = itertools.count()
 
     def checkout(self):
         now = time.time()
@@ -986,7 +994,7 @@ class SocketPool(object):
                 return self.in_use[tid]
 
         while self.free:
-            ts, sock = heapq.heappop(self.free)
+            ts, _, sock = heapq.heappop(self.free)
             if ts < now - self.max_age:
                 try:
                     sock.close()
@@ -1018,7 +1026,7 @@ class SocketPool(object):
         if tid in self.in_use:
             sock = self.in_use.pop(tid)
             if not sock.closed:
-                heapq.heappush(self.free, (time.time(), sock))
+                heapq.heappush(self.free, (time.time(), next(self._seq), sock))
             return True
         return False
 

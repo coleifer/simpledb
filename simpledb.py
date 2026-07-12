@@ -1004,7 +1004,14 @@ class SocketPool(object):
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         conn.connect((self.host, self.port))
-        return conn.makefile('rwb')
+        fh = conn.makefile('rwb')
+        # Transfer fd ownership to the file object: close() only marks the
+        # socket closed, and "the underlying system resource (e.g. a file
+        # descriptor) is also closed when all file objects from makefile()
+        # are closed."
+        # https://docs.python.org/3/library/socket.html#socket.socket.close
+        conn.close()
+        return fh
 
     def checkin(self):
         tid = self._tid()

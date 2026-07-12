@@ -551,7 +551,7 @@ class QueueServer(object):
             else:
                 try:
                     kv_val = Value(kv_val.data_type, kv_val.value + value)
-                except:
+                except Exception:
                     raise CommandError('Incompatible data-types')
         return self._kv[key].value
 
@@ -951,7 +951,7 @@ class QueueServer(object):
         if not isinstance(data, list):
             try:
                 data = data.split()
-            except:
+            except Exception:
                 raise CommandError('Unrecognized request type.')
 
         if not isinstance(data[0], basestring):
